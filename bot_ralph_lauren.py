@@ -311,7 +311,7 @@ def run():
                     f"|  {item.get('title','')[:50]}"
                 )
 
-                if DISCORD_WEBHOOK != "YOUR_DISCORD_WEBHOOK_URL_HERE":
+                if DISCORD_WEBHOOK_URL:
                     send_discord(item, label, profit)
 
             time.sleep(1.5)  # be polite between queries
