@@ -136,15 +136,6 @@ BUTTON_UP_KEYWORDS = [
 #  CHIEF KEEF CITY POLO DETECTION
 #  These are the high-value embroidered city polos
 # ─────────────────────────────────────────────
-CITY_POLO_CITIES = [
-    "chicago", "new york", "atlanta", "los angeles", "miami",
-    "houston", "detroit", "london", "paris", "rome",
-    "boston", "dallas", "seattle", "denver", "phoenix",
-    "philadelphia", "las vegas", "toronto", "montreal",
-    "new orleans", "baltimore", "memphis", "cleveland",
-    "san francisco", "washington", "nashville", "portland",
-]
-
 # ─────────────────────────────────────────────
 #  BRAND CHECK
 # ─────────────────────────────────────────────
@@ -152,35 +143,96 @@ REQUIRED_BRAND_KEYWORDS = [
     "ralph lauren", "polo ralph", "rl polo", "polo rl",
 ]
 
-# High-value keywords — used for score display
-HIGH_VALUE_KEYWORDS = [
-    "striped", "stripe", "rugby", "usa", "vintage", "1990", "1980", "1992",
-    "1995", "big pony", "cable knit", "made in usa", "country",
-    "chief keef", "oversized", "double rl", "rrl", "pwing",
-]
+# ─────────────────────────────────────────────
+#  STEAL SIGNAL SYSTEM
+#  Based on visual analysis of target items:
+#  Big Pony + diagonal sash + city name + crest + sleeve number
+#  = the Chief Keef / Polo Cup era pieces that resell for £35-90
+#
+#  Points accumulate — the more signals, the better the steal.
+#  5+ points = FIRE regardless of raw profit calc.
+# ─────────────────────────────────────────────
+STEAL_SIGNALS = {
+    # ── Tier 1: Strongest signals (3pts) ──
+    # These alone indicate a high-value collectable piece
+    "big pony":       3,   # Large embroidered horse — key visual identifier
+    "diagonal":       3,   # Diagonal sash across chest
+    "sash":           3,
+    "polo cup":       3,   # Tournament/event branding
+    "polo challenge": 3,
+    "paris":          3,   # City collection — embroidered city names
+    "dubai":          3,
+    "london":         3,   # (not women's — checked separately)
+    "new york":       3,
+    "chicago":        3,
+    "miami":          3,
+    "tokyo":          3,
+    "rome":           3,
+    "barcelona":      3,
+    "berlin":         3,
+    "sydney":         3,
+    "milan":          3,
+    "atlanta":        3,
+    "boston":         3,
+    "shanghai":       3,
+    "moscow":         3,
+    "madrid":         3,
 
-# ─────────────────────────────────────────────
-#  PROFIT ESTIMATOR
-# ─────────────────────────────────────────────
-RESELL_TABLE = {
-    "city_polo":  (50, 90),   # Chief Keef embroidered city polo
-    "rugby":      (40, 75),
-    "striped":    (35, 60),
-    "stripe":     (35, 60),
-    "usa":        (30, 55),
-    "vintage":    (28, 50),
-    "double rl":  (50, 90),
-    "rrl":        (50, 90),
-    "big pony":   (25, 45),
-    "cable":      (30, 55),
-    "oversized":  (22, 40),
-    "button_up":  (12, 22),   # Deliberately low — button-ups don't resell well
-    "default":    (18, 32),
+    # ── Tier 2: Strong supporting signals (2pts) ──
+    "crest":          2,   # Gold/royal crest badge embroidery
+    "badge":          2,
+    "embroidered":    2,
+    "embroidery":     2,
+    "striped":        2,   # Stripe patterns = vintage collectables
+    "stripe":         2,
+    "colour block":   2,   # Multi-panel colour blocking
+    "color block":    2,
+    "colourblock":    2,
+    "colorblock":     2,
+    "multicolour":    2,
+    "multi colour":   2,
+    "multi-colour":   2,
+    "panel":          2,
+    "flag":           2,   # Country flag embroidery (Paris polo image)
+    "pwing":          2,
+    "custom fit":     2,
+    "slim fit":       2,
+    "number":         2,   # Numbered sleeve (#3, #5, #7)
+    "double rl":      2,
+    "rrl":            2,
+
+    # ── Tier 3: General quality signals (1pt) ──
+    "rugby":          1,
+    "vintage":        1,
+    "usa":            1,
+    "cable knit":     1,
+    "made in usa":    1,
+    "country":        1,
+    "oversized":      1,
+    "limited":        1,
+    "rare":           1,
 }
-POSTAGE_COST   = 3.50
-EBAY_FEE_RATE  = 0.1269   # eBay ~12.69% final value fee
 
-# Price ceiling for cheap rugby "steal" boost
+# Thresholds
+SIGNAL_FIRE_THRESHOLD  = 5   # 5+ pts = FIRE (e.g. big pony + city name + crest = 7pts)
+SIGNAL_SOLID_THRESHOLD = 2   # 2-4 pts = at least SOLID floor
+
+# Resell estimates keyed by dominant signal
+RESELL_TABLE = {
+    "high_signal":  (45, 90),   # 5+ signal points — city polo / polo cup era
+    "mid_signal":   (30, 55),   # 2-4 signal points — striped, crested, colour-blocked
+    "rugby":        (40, 75),   # Rugby tops
+    "double rl":    (50, 90),
+    "rrl":          (50, 90),
+    "cable":        (30, 55),
+    "button_up":    (12, 22),   # Button-ups — deliberately low
+    "default":      (18, 32),
+}
+
+POSTAGE_COST  = 3.50
+EBAY_FEE_RATE = 0.1269   # ~12.69% final value fee
+
+# Cheap rugby steal threshold
 CHEAP_RUGBY_MAX_PRICE = 7.00
 
 
@@ -203,38 +255,50 @@ def get_price(item):
     return 0.0
 
 
-def is_city_polo(title: str, label: str) -> bool:
-    """Detect Chief Keef embroidered city polos — only fires on the oversized polo search."""
-    if "CHIEF KEEF" not in label:
-        return False
+def score_signals(title: str) -> tuple:
+    """
+    Scan title for steal signals and return (total_score, matched_signal_list).
+    More signals = rarer / more collectable piece.
+    """
     title_lower = title.lower()
-    return any(city in title_lower for city in CITY_POLO_CITIES)
+    matched = []
+    total = 0
+    for signal, pts in STEAL_SIGNALS.items():
+        if signal in title_lower:
+            matched.append(f"{signal}(+{pts})")
+            total += pts
+    return total, matched
 
 
 def is_cheap_rugby(title: str, buy_price: float) -> bool:
-    """Rugby top bought for £1-7 — high ROI steal."""
     return "rugby" in title.lower() and buy_price <= CHEAP_RUGBY_MAX_PRICE
 
 
 def is_button_up(title: str) -> bool:
-    title_lower = title.lower()
-    return any(kw in title_lower for kw in BUTTON_UP_KEYWORDS)
+    return any(kw in title.lower() for kw in BUTTON_UP_KEYWORDS)
 
 
 def estimate_profit(title: str, buy_price: float, label: str) -> dict:
     title_lower = title.lower()
+    signal_score, matched_signals = score_signals(title)
+    btn_up  = is_button_up(title)
+    rugby   = is_cheap_rugby(title, buy_price)
 
-    # Determine resell table key
-    if is_city_polo(title, label):
-        resell_key = "city_polo"
-    elif is_button_up(title):
+    # ── Pick resell bracket ──
+    if btn_up:
         resell_key = "button_up"
+    elif signal_score >= SIGNAL_FIRE_THRESHOLD:
+        resell_key = "high_signal"
+    elif signal_score >= SIGNAL_SOLID_THRESHOLD:
+        resell_key = "mid_signal"
+    elif "rugby" in title_lower:
+        resell_key = "rugby"
+    elif "double rl" in title_lower or "rrl" in title_lower:
+        resell_key = "double rl" if "double rl" in title_lower else "rrl"
+    elif "cable" in title_lower:
+        resell_key = "cable"
     else:
         resell_key = "default"
-        for kw in RESELL_TABLE:
-            if kw not in ("default", "city_polo", "button_up") and kw in title_lower:
-                if RESELL_TABLE[kw][1] > RESELL_TABLE[resell_key][1]:
-                    resell_key = kw
 
     low, high = RESELL_TABLE[resell_key]
     net_low  = round(low  * (1 - EBAY_FEE_RATE) - POSTAGE_COST - buy_price, 2)
@@ -242,16 +306,14 @@ def estimate_profit(title: str, buy_price: float, label: str) -> dict:
     roi_low  = round((net_low  / buy_price) * 100) if buy_price > 0 else 0
     roi_high = round((net_high / buy_price) * 100) if buy_price > 0 else 0
 
-    # ── VERDICT LOGIC ──
-    city   = is_city_polo(title, label)
-    rugby  = is_cheap_rugby(title, buy_price)
-    btn_up = is_button_up(title)
-
-    if city or rugby or net_low >= 20:
+    # ── VERDICT ──
+    # Signal score overrides raw profit — these pieces are rare regardless of price
+    if btn_up:
+        rating = "⚠️ TIGHT"   # Button-ups hard-capped
+    elif signal_score >= SIGNAL_FIRE_THRESHOLD or rugby:
         rating = "🔥 FIRE"
-    elif btn_up:
-        # Button-ups capped at TIGHT regardless of profit calc
-        rating = "⚠️ TIGHT"
+    elif net_low >= 20 or signal_score >= SIGNAL_SOLID_THRESHOLD:
+        rating = "✅ SOLID" if net_low >= 10 else "⚠️ TIGHT"
     elif net_low >= 10:
         rating = "✅ SOLID"
     elif net_low >= 4:
@@ -259,12 +321,17 @@ def estimate_profit(title: str, buy_price: float, label: str) -> dict:
     else:
         rating = "❌ SKIP"
 
-    # Tag city polos and cheap rugbies for Discord
+    # Build special tag for Discord
     special_tag = ""
-    if city:
-        special_tag = "🏙️ CITY POLO"
+    if signal_score >= SIGNAL_FIRE_THRESHOLD:
+        # Show top matched signals in the tag
+        top = ", ".join(s.split("(")[0] for s in matched_signals[:3])
+        special_tag = f"🏆 PREMIUM PIECE — {top}"
     elif rugby:
         special_tag = "💸 CHEAP RUGBY STEAL"
+    elif matched_signals:
+        top = ", ".join(s.split("(")[0] for s in matched_signals[:2])
+        special_tag = f"✨ Signals: {top}"
 
     return {
         "resell_low": low, "resell_high": high,
@@ -272,6 +339,8 @@ def estimate_profit(title: str, buy_price: float, label: str) -> dict:
         "roi_low": roi_low, "roi_high": roi_high,
         "rating": rating,
         "special_tag": special_tag,
+        "signal_score": signal_score,
+        "matched_signals": matched_signals,
     }
 
 
@@ -370,9 +439,9 @@ def is_ralph_lauren(item: dict) -> bool:
     )
 
 
-def score_item(item: dict) -> int:
-    title = (item.get("title") or "").lower()
-    return sum(1 for kw in HIGH_VALUE_KEYWORDS if kw in title)
+def score_item(item: dict) -> tuple:
+    title = item.get("title") or ""
+    return score_signals(title)
 
 
 # ─────────────────────────────────────────────
@@ -409,7 +478,7 @@ def send_discord(item: dict, label: str, profit: dict):
             {"name": "📈 Net Profit",   "value": f"£{profit['profit_low']}–£{profit['profit_high']}",        "inline": True},
             {"name": "🎯 ROI",          "value": f"{profit['roi_low']}%–{profit['roi_high']}%",              "inline": True},
             {"name": "⚡ Verdict",      "value": profit["rating"],                                          "inline": True},
-            {"name": "🏷️ Brand Check",  "value": "✅ Ralph Lauren confirmed",                               "inline": True},
+            {"name": "🔍 Signal Score", "value": f"{profit['signal_score']}pts — {', '.join(s.split('(')[0] for s in profit['matched_signals']) or 'none'}", "inline": False},
         ],
         "thumbnail": {"url": photo} if photo else {},
         "footer": {"text": f"Ralph Lauren Bot v1.2 • {datetime.now().strftime('%H:%M:%S')}"},
