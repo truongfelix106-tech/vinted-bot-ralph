@@ -221,7 +221,7 @@ def score_item(item: dict) -> int:
 #  DISCORD NOTIFICATION
 # ─────────────────────────────────────────────
 def send_discord(item: dict, label: str, profit: dict):
-    price = float(item.get("price") or 0)
+    price = get_price(item)
     title = item.get("title", "Unknown")
     url   = item.get("url") or f"https://{DOMAIN}/items/{item.get('id')}"
     photo = ""
