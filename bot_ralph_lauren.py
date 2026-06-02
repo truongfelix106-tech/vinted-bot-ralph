@@ -31,7 +31,7 @@ init(autoreset=True)
 # ─────────────────────────────────────────────
 #  CONFIG — edit these before running
 # ─────────────────────────────────────────────
-DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1511400876684873829/_mF8_LJxZrP4urAjNxVNAheMDQHsH35V_uUKp9v8iM0v3E5aNPJ0ASOYbFOw0cwhRlae"
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "PASTE_YOUR_WEBHOOK_URL_HERE")
 POLL_INTERVAL   = 12          # seconds between scans (don't go below 8)
 MAX_PRICE_GBP   = 16.00
 DOMAIN          = "www.vinted.co.uk"
