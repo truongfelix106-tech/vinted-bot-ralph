@@ -1,10 +1,11 @@
 """
 ╔══════════════════════════════════════════════════════════════╗
-║          RALPH LAUREN VINTED SNIPER BOT v1.1                ║
+║          RALPH LAUREN VINTED SNIPER BOT v1.2                ║
 ║   Targets: Polo shirts, Rugby tops, Striped vintage,        ║
-║            USA branded, Chief Keef style polos              ║
+║            USA branded, Chief Keef city polos               ║
 ║   Max Price: £16  |  New listings only  |  Men's only       ║
 ║   Sizes: Age 14+ only  |  Max size: L  |  No women's        ║
+║   Blocked: Accessories, hats, button-ups                    ║
 ╚══════════════════════════════════════════════════════════════╝
 
 HOW TO USE:
@@ -12,19 +13,25 @@ HOW TO USE:
   2. Set your Discord webhook URL in DISCORD_WEBHOOK below
   3. Run: python bot_ralph_lauren.py
 
+VERDICT LOGIC:
+  🔥 FIRE  (blue  in Discord) = net profit ≥ £20  OR  cheap rugby (£1-7)  OR  city polo
+  ✅ SOLID (green in Discord) = net profit ≥ £10
+  ⚠️ TIGHT (amber in Discord) = net profit ≥ £4   (button-ups capped here)
+  ❌ SKIP  (red   in Discord) = net profit < £4
+
 PROFIT LOGIC (realistic UK resale margins):
-  - Striped vintage polo (bought £8-16)  → resell eBay/Depop £35-60  → profit £19-44
-  - Rugby top (bought £10-16)            → resell eBay/Depop £40-75  → profit £24-59
-  - USA branded RL (bought £8-16)        → resell eBay/Depop £30-55  → profit £14-39
-  - Standard polo (bought £5-16)         → resell Vinted/Depop £22-35 → profit £6-19
+  - City polo / Chief Keef (bought £5-16)  → resell eBay/Depop £50-90  → profit £30-60
+  - Striped vintage polo (bought £8-16)    → resell eBay/Depop £35-60  → profit £19-44
+  - Rugby top (bought £1-7)               → resell eBay/Depop £40-75  → profit £29-60 🔥
+  - Rugby top (bought £8-16)              → resell eBay/Depop £40-75  → profit £20-45
+  - USA branded RL (bought £8-16)         → resell eBay/Depop £30-55  → profit £14-39
+  - Button-up shirt (bought £5-16)        → resell £15-25             → capped ⚠️ TIGHT
   After fees (~13% platform + postage ~£3.50): subtract ~£5-8 from above.
 """
 
 import os
 import requests
 import time
-import json
-import hashlib
 from datetime import datetime
 from colorama import Fore, Style, init
 
@@ -39,8 +46,7 @@ MAX_PRICE_GBP   = 16.00
 DOMAIN          = "www.vinted.co.uk"
 
 # ─────────────────────────────────────────────
-#  SEARCH QUERIES  (brand_ids=88 = Ralph Lauren on vinted.co.uk)
-#  Each entry: (label, search_text, priority_score_hint)
+#  SEARCH QUERIES
 # ─────────────────────────────────────────────
 SEARCHES = [
     # (label,               search_text,                           priority)
@@ -53,17 +59,13 @@ SEARCHES = [
 ]
 
 # ─────────────────────────────────────────────
-#  BLOCKED SIZES & DEMOGRAPHICS
+#  BLOCKED: UNDER-14 SIZES
 # ─────────────────────────────────────────────
-
-# Infant / children size keywords — blocks everything under age 14
 BLOCKED_SIZE_KEYWORDS = [
-    # Babies / toddlers
     "baby", "infant", "toddler", "newborn",
     "0-3", "3-6", "6-9", "6-12", "12-18", "18-24", "9-12",
     "0m", "3m", "6m", "9m", "12m", "18m",
     "5t", "4t", "3t", "2t", "1t",
-    # Ages explicitly under 14
     "age 1", "age 2", "age 3", "age 4", "age 5",
     "age 6", "age 7", "age 8", "age 9", "age 10",
     "age 11", "age 12", "age 13",
@@ -72,13 +74,14 @@ BLOCKED_SIZE_KEYWORDS = [
     "11 year", "12 year", "13 year",
     "1-2", "2-3", "3-4", "4-5", "5-6", "6-7", "7-8",
     "8-9", "9-10", "10-11", "11-12", "12-13", "13-14",
-    # General kids keywords
     "kids", "children", "child", "junior",
 ]
 
-# Sizes XL and above — all blocked
+# ─────────────────────────────────────────────
+#  BLOCKED: XL AND ABOVE
+# ─────────────────────────────────────────────
 BLOCKED_SIZE_LARGE = [
-    " xl", "/xl", "-xl", "_xl",   # XL with boundary so "xml" isn't caught
+    " xl", "/xl", "-xl", "_xl",
     "xxl", "xxxl", "xxxxl",
     "2xl", "3xl", "4xl", "5xl",
     "1x", "2x", "3x", "4x", "5x",
@@ -86,19 +89,70 @@ BLOCKED_SIZE_LARGE = [
     "plus size", "plus-size",
 ]
 
-# Women's department / listing keywords — all blocked
+# ─────────────────────────────────────────────
+#  BLOCKED: WOMEN'S
+# ─────────────────────────────────────────────
 BLOCKED_WOMENS_KEYWORDS = [
     "women's", "womens", "womenswear",
     "ladies", "ladieswear",
     "for her", "for women",
 ]
 
-# Title keywords that must appear (brand check)
+# ─────────────────────────────────────────────
+#  BLOCKED: ACCESSORIES (hats, caps, scarves, bags, belts, etc.)
+# ─────────────────────────────────────────────
+BLOCKED_ACCESSORY_KEYWORDS = [
+    # Headwear
+    "hat", "cap", "caps", "beanie", "snapback", "fitted cap",
+    "baseball cap", "trucker cap", "bucket hat", "flat cap",
+    "dad hat", "visor", "beret", "fedora",
+    # Neck/face
+    "scarf", "scarves", "snood", "bandana", "neckerchief",
+    # Bags
+    "bag", "tote", "backpack", "handbag", "wallet", "purse",
+    "clutch", "satchel", "holdall", "duffel", "fanny pack",
+    # Belts & small accessories
+    "belt", "keyring", "keychain", "lanyard", "pin badge",
+    # Footwear
+    "shoes", "trainers", "boots", "sneakers", "loafers",
+    "sandals", "slippers", "socks",
+    # Jewellery / watches
+    "watch", "bracelet", "necklace", "ring", "earrings",
+    "cufflinks", "tie clip",
+    # Other
+    "sunglasses", "glasses", "umbrella", "gloves",
+]
+
+# ─────────────────────────────────────────────
+#  BLOCKED: BUTTON-UP SHIRTS (lower resell value)
+# ─────────────────────────────────────────────
+BUTTON_UP_KEYWORDS = [
+    "button up", "button-up", "button down", "button-down",
+    "dress shirt", "oxford shirt", "popover shirt",
+    "flannel shirt", "western shirt", "chambray",
+]
+
+# ─────────────────────────────────────────────
+#  CHIEF KEEF CITY POLO DETECTION
+#  These are the high-value embroidered city polos
+# ─────────────────────────────────────────────
+CITY_POLO_CITIES = [
+    "chicago", "new york", "atlanta", "los angeles", "miami",
+    "houston", "detroit", "london", "paris", "rome",
+    "boston", "dallas", "seattle", "denver", "phoenix",
+    "philadelphia", "las vegas", "toronto", "montreal",
+    "new orleans", "baltimore", "memphis", "cleveland",
+    "san francisco", "washington", "nashville", "portland",
+]
+
+# ─────────────────────────────────────────────
+#  BRAND CHECK
+# ─────────────────────────────────────────────
 REQUIRED_BRAND_KEYWORDS = [
     "ralph lauren", "polo ralph", "rl polo", "polo rl",
 ]
 
-# High-value target keywords — bumps profit score
+# High-value keywords — used for score display
 HIGH_VALUE_KEYWORDS = [
     "striped", "stripe", "rugby", "usa", "vintage", "1990", "1980", "1992",
     "1995", "big pony", "cable knit", "made in usa", "country",
@@ -109,35 +163,36 @@ HIGH_VALUE_KEYWORDS = [
 #  PROFIT ESTIMATOR
 # ─────────────────────────────────────────────
 RESELL_TABLE = {
-    "rugby":    (40, 75),
-    "striped":  (35, 60),
-    "stripe":   (35, 60),
-    "usa":      (30, 55),
-    "vintage":  (28, 50),
-    "double rl":(50, 90),
-    "rrl":      (50, 90),
-    "big pony": (25, 45),
-    "cable":    (30, 55),
-    "oversized":(22, 40),
-    "default":  (18, 32),
+    "city_polo":  (50, 90),   # Chief Keef embroidered city polo
+    "rugby":      (40, 75),
+    "striped":    (35, 60),
+    "stripe":     (35, 60),
+    "usa":        (30, 55),
+    "vintage":    (28, 50),
+    "double rl":  (50, 90),
+    "rrl":        (50, 90),
+    "big pony":   (25, 45),
+    "cable":      (30, 55),
+    "oversized":  (22, 40),
+    "button_up":  (12, 22),   # Deliberately low — button-ups don't resell well
+    "default":    (18, 32),
 }
-VINTED_FEE_RATE = 0.05    # seller fee ~5%
-POSTAGE_COST    = 3.50
-EBAY_FEE_RATE   = 0.1269  # eBay ~12.69% final value fee
+POSTAGE_COST   = 3.50
+EBAY_FEE_RATE  = 0.1269   # eBay ~12.69% final value fee
+
+# Price ceiling for cheap rugby "steal" boost
+CHEAP_RUGBY_MAX_PRICE = 7.00
 
 
 def get_price(item):
     price_data = item.get("price", 0)
-
     if isinstance(price_data, (int, float)):
         return float(price_data)
-
     if isinstance(price_data, str):
         try:
             return float(price_data)
         except ValueError:
             return 0.0
-
     if isinstance(price_data, dict):
         for key in ("amount", "value", "numeric"):
             if key in price_data:
@@ -145,28 +200,78 @@ def get_price(item):
                     return float(price_data[key])
                 except (TypeError, ValueError):
                     pass
-
     return 0.0
 
 
-def estimate_profit(title: str, buy_price: float) -> dict:
+def is_city_polo(title: str, label: str) -> bool:
+    """Detect Chief Keef embroidered city polos — only fires on the oversized polo search."""
+    if "CHIEF KEEF" not in label:
+        return False
     title_lower = title.lower()
-    low, high = RESELL_TABLE["default"]
-    for kw, (l, h) in RESELL_TABLE.items():
-        if kw != "default" and kw in title_lower:
-            if h > high:
-                low, high = l, h
-    # net after eBay fees + postage
+    return any(city in title_lower for city in CITY_POLO_CITIES)
+
+
+def is_cheap_rugby(title: str, buy_price: float) -> bool:
+    """Rugby top bought for £1-7 — high ROI steal."""
+    return "rugby" in title.lower() and buy_price <= CHEAP_RUGBY_MAX_PRICE
+
+
+def is_button_up(title: str) -> bool:
+    title_lower = title.lower()
+    return any(kw in title_lower for kw in BUTTON_UP_KEYWORDS)
+
+
+def estimate_profit(title: str, buy_price: float, label: str) -> dict:
+    title_lower = title.lower()
+
+    # Determine resell table key
+    if is_city_polo(title, label):
+        resell_key = "city_polo"
+    elif is_button_up(title):
+        resell_key = "button_up"
+    else:
+        resell_key = "default"
+        for kw in RESELL_TABLE:
+            if kw not in ("default", "city_polo", "button_up") and kw in title_lower:
+                if RESELL_TABLE[kw][1] > RESELL_TABLE[resell_key][1]:
+                    resell_key = kw
+
+    low, high = RESELL_TABLE[resell_key]
     net_low  = round(low  * (1 - EBAY_FEE_RATE) - POSTAGE_COST - buy_price, 2)
     net_high = round(high * (1 - EBAY_FEE_RATE) - POSTAGE_COST - buy_price, 2)
-    roi_low  = round((net_low / buy_price) * 100) if buy_price > 0 else 0
+    roi_low  = round((net_low  / buy_price) * 100) if buy_price > 0 else 0
     roi_high = round((net_high / buy_price) * 100) if buy_price > 0 else 0
-    rating = "🔥 FIRE" if net_low >= 20 else "✅ SOLID" if net_low >= 10 else "⚠️ TIGHT" if net_low >= 4 else "❌ SKIP"
+
+    # ── VERDICT LOGIC ──
+    city   = is_city_polo(title, label)
+    rugby  = is_cheap_rugby(title, buy_price)
+    btn_up = is_button_up(title)
+
+    if city or rugby or net_low >= 20:
+        rating = "🔥 FIRE"
+    elif btn_up:
+        # Button-ups capped at TIGHT regardless of profit calc
+        rating = "⚠️ TIGHT"
+    elif net_low >= 10:
+        rating = "✅ SOLID"
+    elif net_low >= 4:
+        rating = "⚠️ TIGHT"
+    else:
+        rating = "❌ SKIP"
+
+    # Tag city polos and cheap rugbies for Discord
+    special_tag = ""
+    if city:
+        special_tag = "🏙️ CITY POLO"
+    elif rugby:
+        special_tag = "💸 CHEAP RUGBY STEAL"
+
     return {
         "resell_low": low, "resell_high": high,
         "profit_low": net_low, "profit_high": net_high,
         "roi_low": roi_low, "roi_high": roi_high,
         "rating": rating,
+        "special_tag": special_tag,
     }
 
 
@@ -200,8 +305,7 @@ def fetch_listings(search_text: str, max_price: float) -> list:
     try:
         r = session.get(url, timeout=10)
         if r.status_code == 200:
-            data = r.json()
-            return data.get("items", [])
+            return r.json().get("items", [])
         elif r.status_code == 401:
             print(f"{Fore.YELLOW}[AUTH] 401 received, re-fetching session cookies...")
             _refresh_session()
@@ -211,7 +315,6 @@ def fetch_listings(search_text: str, max_price: float) -> list:
 
 
 def _refresh_session():
-    """Visit homepage to grab fresh cookies (access_token_web etc.)"""
     try:
         session.get(f"https://{DOMAIN}/", timeout=10)
     except Exception:
@@ -222,37 +325,40 @@ def _refresh_session():
 #  FILTERS
 # ─────────────────────────────────────────────
 def is_infant_or_underage(item: dict) -> bool:
-    """Block anything sized for under-14s."""
-    title = (item.get("title") or "").lower()
-    desc  = (item.get("description") or "").lower()
-    size  = (item.get("size_title") or "").lower()
-    text  = title + " " + desc + " " + size
+    text = " ".join([
+        (item.get("title") or ""),
+        (item.get("description") or ""),
+        (item.get("size_title") or ""),
+    ]).lower()
     return any(kw in text for kw in BLOCKED_SIZE_KEYWORDS)
 
 
 def is_oversized(item: dict) -> bool:
-    """Block XL and above."""
-    size  = (item.get("size_title") or "").lower()
-    title = (item.get("title") or "").lower()
-    text  = " " + size + " " + title + " "   # padded so word-boundary checks work
+    text = " " + (item.get("size_title") or "").lower() + " " + (item.get("title") or "").lower() + " "
     return any(kw in text for kw in BLOCKED_SIZE_LARGE)
 
 
 def is_womens(item: dict) -> bool:
-    """Block women's / ladies listings."""
-    title      = (item.get("title") or "").lower()
-    desc       = (item.get("description") or "").lower()
-    dept       = (item.get("department") or "").lower()          # API field e.g. "Women"
-    dept_name  = (item.get("department_name") or "").lower()
-    unisex     = (item.get("unisex") or False)
-    text       = title + " " + desc + " " + dept + " " + dept_name
-
-    # If Vinted marks it explicitly as women's department, reject
-    if "women" in dept or "female" in dept:
+    dept = (item.get("department") or "").lower()
+    dept_name = (item.get("department_name") or "").lower()
+    if "women" in dept or "female" in dept or "women" in dept_name:
         return True
-
-    # Keyword scan across title + description
+    text = " ".join([
+        (item.get("title") or ""),
+        (item.get("description") or ""),
+        dept, dept_name,
+    ]).lower()
     return any(kw in text for kw in BLOCKED_WOMENS_KEYWORDS)
+
+
+def is_accessory(item: dict) -> bool:
+    """Block hats, caps, bags, belts, scarves and all accessories."""
+    text = " ".join([
+        (item.get("title") or ""),
+        (item.get("description") or ""),
+        (item.get("category_title") or ""),   # Vinted category field
+    ]).lower()
+    return any(kw in text for kw in BLOCKED_ACCESSORY_KEYWORDS)
 
 
 def is_ralph_lauren(item: dict) -> bool:
@@ -266,11 +372,7 @@ def is_ralph_lauren(item: dict) -> bool:
 
 def score_item(item: dict) -> int:
     title = (item.get("title") or "").lower()
-    score = 0
-    for kw in HIGH_VALUE_KEYWORDS:
-        if kw in title:
-            score += 1
-    return score
+    return sum(1 for kw in HIGH_VALUE_KEYWORDS if kw in title)
 
 
 # ─────────────────────────────────────────────
@@ -284,23 +386,33 @@ def send_discord(item: dict, label: str, profit: dict):
     if item.get("photos"):
         photo = item["photos"][0].get("url") or item["photos"][0].get("full_size_url", "")
 
-    color_map = {"🔥 FIRE": 0xFF4500, "✅ SOLID": 0x00C851, "⚠️ TIGHT": 0xFFBB33, "❌ SKIP": 0xCC0000}
+    color_map = {
+        "🔥 FIRE":  0x0099FF,   # Blue  — premium finds
+        "✅ SOLID": 0x00C851,   # Green
+        "⚠️ TIGHT": 0xFFBB33,  # Amber
+        "❌ SKIP":  0xCC0000,   # Red
+    }
     embed_color = color_map.get(profit["rating"], 0x888888)
+
+    # Build description — add special tag if present
+    desc_lines = [f"**{title}**", f"[🔗 View on Vinted]({url})"]
+    if profit.get("special_tag"):
+        desc_lines.insert(0, f"**{profit['special_tag']}**")
 
     embed = {
         "title": f"{label}  |  £{price:.2f}",
-        "description": f"**{title}**\n[🔗 View on Vinted]({url})",
+        "description": "\n".join(desc_lines),
         "color": embed_color,
         "fields": [
-            {"name": "💰 Buy Price",     "value": f"£{price:.2f}",                                          "inline": True},
-            {"name": "📦 Resell Range",  "value": f"£{profit['resell_low']}–£{profit['resell_high']} (eBay/Depop)", "inline": True},
-            {"name": "📈 Net Profit",    "value": f"£{profit['profit_low']}–£{profit['profit_high']}",       "inline": True},
-            {"name": "🎯 ROI",           "value": f"{profit['roi_low']}%–{profit['roi_high']}%",             "inline": True},
-            {"name": "⚡ Verdict",       "value": profit["rating"],                                         "inline": True},
-            {"name": "🏷️ Brand Check",   "value": "✅ Ralph Lauren confirmed",                              "inline": True},
+            {"name": "💰 Buy Price",    "value": f"£{price:.2f}",                                           "inline": True},
+            {"name": "📦 Resell Range", "value": f"£{profit['resell_low']}–£{profit['resell_high']} (eBay/Depop)", "inline": True},
+            {"name": "📈 Net Profit",   "value": f"£{profit['profit_low']}–£{profit['profit_high']}",        "inline": True},
+            {"name": "🎯 ROI",          "value": f"{profit['roi_low']}%–{profit['roi_high']}%",              "inline": True},
+            {"name": "⚡ Verdict",      "value": profit["rating"],                                          "inline": True},
+            {"name": "🏷️ Brand Check",  "value": "✅ Ralph Lauren confirmed",                               "inline": True},
         ],
         "thumbnail": {"url": photo} if photo else {},
-        "footer": {"text": f"Ralph Lauren Bot v1.1 • {datetime.now().strftime('%H:%M:%S')}"},
+        "footer": {"text": f"Ralph Lauren Bot v1.2 • {datetime.now().strftime('%H:%M:%S')}"},
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
 
@@ -323,9 +435,10 @@ def send_discord(item: dict, label: str, profit: dict):
 # ─────────────────────────────────────────────
 def run():
     print(f"\n{Fore.CYAN}{'═'*60}")
-    print(f"{Fore.CYAN}  🎽  RALPH LAUREN VINTED SNIPER v1.1 — STARTED")
+    print(f"{Fore.CYAN}  🎽  RALPH LAUREN VINTED SNIPER v1.2 — STARTED")
     print(f"{Fore.CYAN}  Max Price: £{MAX_PRICE_GBP}  |  Interval: {POLL_INTERVAL}s")
-    print(f"{Fore.CYAN}  Filters: Men's only | Age 14+ | Max size L")
+    print(f"{Fore.CYAN}  Filters: Men's only | Age 14+ | Max size L | No accessories")
+    print(f"{Fore.CYAN}  🔥 FIRE = blue | city polos + cheap rugbies auto-FIRE")
     print(f"{Fore.CYAN}{'═'*60}\n")
 
     _refresh_session()
@@ -343,7 +456,6 @@ def run():
                 item_id = str(item.get("id", ""))
                 if not item_id or item_id in seen_ids:
                     continue
-
                 seen_ids.add(item_id)
 
                 # ── FILTERS ──
@@ -353,6 +465,8 @@ def run():
                     continue
                 if is_womens(item):
                     continue
+                if is_accessory(item):
+                    continue
                 if not is_ralph_lauren(item):
                     continue
 
@@ -361,21 +475,25 @@ def run():
                     continue
 
                 # ── SCORE & PROFIT ──
-                score  = score_item(item)
-                profit = estimate_profit(item.get("title", ""), price)
+                profit = estimate_profit(item.get("title", ""), price, label)
 
                 found_this_cycle += 1
-                verdict_color = Fore.RED if "FIRE" in profit["rating"] else Fore.GREEN if "SOLID" in profit["rating"] else Fore.YELLOW
+                verdict_color = (
+                    Fore.BLUE   if "FIRE"  in profit["rating"] else
+                    Fore.GREEN  if "SOLID" in profit["rating"] else
+                    Fore.YELLOW
+                )
+                tag = f"  [{profit['special_tag']}]" if profit.get("special_tag") else ""
                 print(
                     f"  {verdict_color}{profit['rating']}  {label}  "
-                    f"£{price:.2f}  →  profit £{profit['profit_low']}-£{profit['profit_high']}  "
-                    f"|  {item.get('title','')[:50]}"
+                    f"£{price:.2f}  →  profit £{profit['profit_low']}-£{profit['profit_high']}"
+                    f"{tag}  |  {item.get('title', '')[:45]}"
                 )
 
                 if DISCORD_WEBHOOK_URL:
                     send_discord(item, label, profit)
 
-            time.sleep(1.5)  # be polite between queries
+            time.sleep(1.5)
 
         if found_this_cycle == 0:
             print(f"  {Fore.WHITE}No new items this cycle.")
