@@ -255,7 +255,7 @@ def send_discord(item: dict, label: str, profit: dict):
     }
 
     try:
-        r = requests.post(DISCORD_WEBHOOK, json=payload, timeout=8)
+        r = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=8)
         if r.status_code not in (200, 204):
             print(f"{Fore.YELLOW}[DISCORD] Non-200: {r.status_code}")
     except Exception as e:
