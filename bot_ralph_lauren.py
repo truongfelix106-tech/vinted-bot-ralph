@@ -19,6 +19,7 @@ PROFIT LOGIC (realistic UK resale margins):
   After fees (~13% platform + postage ~£3.50): subtract ~£5-8 from above.
 """
 
+import os
 import requests
 import time
 import json
