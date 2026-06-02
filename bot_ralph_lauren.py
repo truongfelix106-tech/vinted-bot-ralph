@@ -295,7 +295,7 @@ def run():
                 if not is_ralph_lauren(item):
                     continue
 
-                price = float(item.get("price") or 0)
+                price = get_price(item)
                 if price <= 0 or price > MAX_PRICE_GBP:
                     continue
 
