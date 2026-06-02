@@ -91,6 +91,32 @@ VINTED_FEE_RATE = 0.05    # seller fee ~5%
 POSTAGE_COST    = 3.50
 EBAY_FEE_RATE   = 0.1269  # eBay ~12.69% final value fee
 
+EBAY_FEE_RATE   = 0.1269
+
+def get_price(item):
+    price_data = item.get("price", 0)
+
+    if isinstance(price_data, (int, float)):
+        return float(price_data)
+
+    if isinstance(price_data, str):
+        try:
+            return float(price_data)
+        except ValueError:
+            return 0.0
+
+    if isinstance(price_data, dict):
+        for key in ("amount", "value", "numeric"):
+            if key in price_data:
+                try:
+                    return float(price_data[key])
+                except (TypeError, ValueError):
+                    pass
+
+    return 0.0
+
+
+def estimate_profit(title: str, buy_price: float) -> dict:
 
 def estimate_profit(title: str, buy_price: float) -> dict:
     title_lower = title.lower()
