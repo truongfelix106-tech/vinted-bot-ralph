@@ -116,7 +116,7 @@ def get_price(item):
     return 0.0
 
 
-def estimate_profit(title: str, buy_price: float) -> dict:
+
 
 def estimate_profit(title: str, buy_price: float) -> dict:
     title_lower = title.lower()
