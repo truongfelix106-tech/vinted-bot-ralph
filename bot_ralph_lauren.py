@@ -1,9 +1,10 @@
 """
 ╔══════════════════════════════════════════════════════════════╗
-║          RALPH LAUREN VINTED SNIPER BOT v1.0                ║
+║          RALPH LAUREN VINTED SNIPER BOT v1.1                ║
 ║   Targets: Polo shirts, Rugby tops, Striped vintage,        ║
 ║            USA branded, Chief Keef style polos              ║
-║   Max Price: £16  |  New listings only  |  No infant sizes  ║
+║   Max Price: £16  |  New listings only  |  Men's only       ║
+║   Sizes: Age 14+ only  |  Max size: L  |  No women's        ║
 ╚══════════════════════════════════════════════════════════════╝
 
 HOW TO USE:
@@ -51,12 +52,45 @@ SEARCHES = [
     ("🧥 RL GENERAL",      "ralph lauren",                        "MED"),
 ]
 
-# Infant / children size keywords to block
+# ─────────────────────────────────────────────
+#  BLOCKED SIZES & DEMOGRAPHICS
+# ─────────────────────────────────────────────
+
+# Infant / children size keywords — blocks everything under age 14
 BLOCKED_SIZE_KEYWORDS = [
-    "baby", "infant", "toddler", "newborn", "0-3", "3-6", "6-9", "6-12",
-    "12-18", "18-24", "9-12", "0m", "3m", "6m", "9m", "12m", "18m",
-    "age 1", "age 2", "age 3", "age 4", "age 5", "kids", "girls", "boys",
-    "children", "child", "junior", "5t", "4t", "3t", "2t", "1t",
+    # Babies / toddlers
+    "baby", "infant", "toddler", "newborn",
+    "0-3", "3-6", "6-9", "6-12", "12-18", "18-24", "9-12",
+    "0m", "3m", "6m", "9m", "12m", "18m",
+    "5t", "4t", "3t", "2t", "1t",
+    # Ages explicitly under 14
+    "age 1", "age 2", "age 3", "age 4", "age 5",
+    "age 6", "age 7", "age 8", "age 9", "age 10",
+    "age 11", "age 12", "age 13",
+    "1 year", "2 year", "3 year", "4 year", "5 year",
+    "6 year", "7 year", "8 year", "9 year", "10 year",
+    "11 year", "12 year", "13 year",
+    "1-2", "2-3", "3-4", "4-5", "5-6", "6-7", "7-8",
+    "8-9", "9-10", "10-11", "11-12", "12-13", "13-14",
+    # General kids keywords
+    "kids", "children", "child", "junior",
+]
+
+# Sizes XL and above — all blocked
+BLOCKED_SIZE_LARGE = [
+    " xl", "/xl", "-xl", "_xl",   # XL with boundary so "xml" isn't caught
+    "xxl", "xxxl", "xxxxl",
+    "2xl", "3xl", "4xl", "5xl",
+    "1x", "2x", "3x", "4x", "5x",
+    "extra large", "extra-large",
+    "plus size", "plus-size",
+]
+
+# Women's department / listing keywords — all blocked
+BLOCKED_WOMENS_KEYWORDS = [
+    "women's", "womens", "womenswear",
+    "ladies", "ladieswear",
+    "for her", "for women",
 ]
 
 # Title keywords that must appear (brand check)
@@ -91,7 +125,6 @@ VINTED_FEE_RATE = 0.05    # seller fee ~5%
 POSTAGE_COST    = 3.50
 EBAY_FEE_RATE   = 0.1269  # eBay ~12.69% final value fee
 
-EBAY_FEE_RATE   = 0.1269
 
 def get_price(item):
     price_data = item.get("price", 0)
@@ -114,8 +147,6 @@ def get_price(item):
                     pass
 
     return 0.0
-
-
 
 
 def estimate_profit(title: str, buy_price: float) -> dict:
@@ -172,7 +203,6 @@ def fetch_listings(search_text: str, max_price: float) -> list:
             data = r.json()
             return data.get("items", [])
         elif r.status_code == 401:
-            # Need fresh session cookie — re-init
             print(f"{Fore.YELLOW}[AUTH] 401 received, re-fetching session cookies...")
             _refresh_session()
     except Exception as e:
@@ -191,12 +221,38 @@ def _refresh_session():
 # ─────────────────────────────────────────────
 #  FILTERS
 # ─────────────────────────────────────────────
-def is_infant(item: dict) -> bool:
+def is_infant_or_underage(item: dict) -> bool:
+    """Block anything sized for under-14s."""
     title = (item.get("title") or "").lower()
     desc  = (item.get("description") or "").lower()
     size  = (item.get("size_title") or "").lower()
     text  = title + " " + desc + " " + size
     return any(kw in text for kw in BLOCKED_SIZE_KEYWORDS)
+
+
+def is_oversized(item: dict) -> bool:
+    """Block XL and above."""
+    size  = (item.get("size_title") or "").lower()
+    title = (item.get("title") or "").lower()
+    text  = " " + size + " " + title + " "   # padded so word-boundary checks work
+    return any(kw in text for kw in BLOCKED_SIZE_LARGE)
+
+
+def is_womens(item: dict) -> bool:
+    """Block women's / ladies listings."""
+    title      = (item.get("title") or "").lower()
+    desc       = (item.get("description") or "").lower()
+    dept       = (item.get("department") or "").lower()          # API field e.g. "Women"
+    dept_name  = (item.get("department_name") or "").lower()
+    unisex     = (item.get("unisex") or False)
+    text       = title + " " + desc + " " + dept + " " + dept_name
+
+    # If Vinted marks it explicitly as women's department, reject
+    if "women" in dept or "female" in dept:
+        return True
+
+    # Keyword scan across title + description
+    return any(kw in text for kw in BLOCKED_WOMENS_KEYWORDS)
 
 
 def is_ralph_lauren(item: dict) -> bool:
@@ -236,15 +292,15 @@ def send_discord(item: dict, label: str, profit: dict):
         "description": f"**{title}**\n[🔗 View on Vinted]({url})",
         "color": embed_color,
         "fields": [
-            {"name": "💰 Buy Price",     "value": f"£{price:.2f}",                              "inline": True},
+            {"name": "💰 Buy Price",     "value": f"£{price:.2f}",                                          "inline": True},
             {"name": "📦 Resell Range",  "value": f"£{profit['resell_low']}–£{profit['resell_high']} (eBay/Depop)", "inline": True},
-            {"name": "📈 Net Profit",    "value": f"£{profit['profit_low']}–£{profit['profit_high']}",               "inline": True},
-            {"name": "🎯 ROI",           "value": f"{profit['roi_low']}%–{profit['roi_high']}%", "inline": True},
-            {"name": "⚡ Verdict",       "value": profit["rating"],                             "inline": True},
-            {"name": "🏷️ Brand Check",   "value": "✅ Ralph Lauren confirmed",                  "inline": True},
+            {"name": "📈 Net Profit",    "value": f"£{profit['profit_low']}–£{profit['profit_high']}",       "inline": True},
+            {"name": "🎯 ROI",           "value": f"{profit['roi_low']}%–{profit['roi_high']}%",             "inline": True},
+            {"name": "⚡ Verdict",       "value": profit["rating"],                                         "inline": True},
+            {"name": "🏷️ Brand Check",   "value": "✅ Ralph Lauren confirmed",                              "inline": True},
         ],
         "thumbnail": {"url": photo} if photo else {},
-        "footer": {"text": f"Ralph Lauren Bot • {datetime.now().strftime('%H:%M:%S')}"},
+        "footer": {"text": f"Ralph Lauren Bot v1.1 • {datetime.now().strftime('%H:%M:%S')}"},
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
 
@@ -267,8 +323,9 @@ def send_discord(item: dict, label: str, profit: dict):
 # ─────────────────────────────────────────────
 def run():
     print(f"\n{Fore.CYAN}{'═'*60}")
-    print(f"{Fore.CYAN}  🎽  RALPH LAUREN VINTED SNIPER — STARTED")
+    print(f"{Fore.CYAN}  🎽  RALPH LAUREN VINTED SNIPER v1.1 — STARTED")
     print(f"{Fore.CYAN}  Max Price: £{MAX_PRICE_GBP}  |  Interval: {POLL_INTERVAL}s")
+    print(f"{Fore.CYAN}  Filters: Men's only | Age 14+ | Max size L")
     print(f"{Fore.CYAN}{'═'*60}\n")
 
     _refresh_session()
@@ -290,7 +347,11 @@ def run():
                 seen_ids.add(item_id)
 
                 # ── FILTERS ──
-                if is_infant(item):
+                if is_infant_or_underage(item):
+                    continue
+                if is_oversized(item):
+                    continue
+                if is_womens(item):
                     continue
                 if not is_ralph_lauren(item):
                     continue
