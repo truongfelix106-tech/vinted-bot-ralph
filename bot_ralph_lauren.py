@@ -28,7 +28,22 @@ PROFIT LOGIC (realistic UK resale margins):
   - Button-up shirt (bought £5-16)        → resell £15-25             → capped ⚠️ TIGHT
   After fees (~13% platform + postage ~£3.50): subtract ~£5-8 from above.
 """
+def save_rating(item_id, rating):
+    import json
 
+    try:
+        with open("feedback.json", "r") as f:
+            data = json.load(f)
+    except:
+        data = []
+
+    data.append({
+        "item_id": str(item_id),
+        "rating": int(rating)
+    })
+
+    with open("feedback.json", "w") as f:
+        json.dump(data, f, indent=2)
 import os
 import requests
 import time
