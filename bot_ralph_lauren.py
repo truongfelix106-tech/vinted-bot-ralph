@@ -1,80 +1,47 @@
 """
-╔══════════════════════════════════════════════════════════════════╗
-║          RALPH LAUREN VINTED SNIPER BOT v2.0                   ║
-║   Targets: Polo shirts, Rugby tops, Striped vintage,           ║
-║            USA branded, Chief Keef city polos                  ║
-║   Max Price: £16  |  New listings only  |  Men's only          ║
-║   Sizes: Age 14+ only  |  Max size: L  |  No women's           ║
-║   Blocked: Accessories, hats, button-ups                       ║
-║                                                                 ║
-║   NEW: TensorFlow MobileNetV2 visual confidence scoring         ║
-║        Visual score added to every Discord embed               ║
-╚══════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════╗
+║          RALPH LAUREN VINTED SNIPER BOT v1.2                ║
+║   Targets: Polo shirts, Rugby tops, Striped vintage,        ║
+║            USA branded, Chief Keef city polos               ║
+║   Max Price: £16  |  New listings only  |  Men's only       ║
+║   Sizes: Age 14+ only  |  Max size: L  |  No women's        ║
+║   Blocked: Accessories, hats, button-ups                    ║
+╚══════════════════════════════════════════════════════════════╝
 
-INSTALL DEPENDENCIES:
-  pip install requests colorama tensorflow pillow numpy
+HOW TO USE:
+  1. pip install requests colorama
+  2. Set your Discord webhook URL in DISCORD_WEBHOOK below
+  3. Run: python bot_ralph_lauren.py
 
-VERDICT TIERS:
-  🔵 BLUE  — Best snipe. Highly desirable, underpriced, must-buy.
-  🟢 GREEN — Strong buy. Good style, fair price, solid resale.
-  🟡 SOLID — Decent flip. Standard good RL, worth buying.
-  🟠 TIGHT — Marginal. Low resale ceiling or weak signals
-  ❌ SKIP  — Not worth it. Plain/common, no collector demand.
+VERDICT LOGIC:
+  🔥 FIRE  (blue  in Discord) = net profit ≥ £20  OR  cheap rugby (£1-7)  OR  city polo
+  ✅ SOLID (green in Discord) = net profit ≥ £10
+  ⚠️ TIGHT (amber in Discord) = net profit ≥ £4   (button-ups capped here)
+  ❌ SKIP  (red   in Discord) = net profit < £4
 
-CATEGORY SYSTEM:
-  A — Country & City Series     → BLUE default under £20
-  B — Team Racing / RL Racing   → BLUE default under £20
-  B2— Big Pony Numbered         → GREEN–BLUE
-  C — Diagonal Sash / Colourblock → GREEN
-  D — Standard Big Pony Plain   → SOLID
-  E — Standard Ralph Lauren Polo → SOLID–TIGHT
-
-  CRITICAL: Never SKIP a confirmed Ralph Lauren polo on signal score alone.
+PROFIT LOGIC (realistic UK resale margins):
+  - City polo / Chief Keef (bought £5-16)  → resell eBay/Depop £50-90  → profit £30-60
+  - Striped vintage polo (bought £8-16)    → resell eBay/Depop £35-60  → profit £19-44
+  - Rugby top (bought £1-7)               → resell eBay/Depop £40-75  → profit £29-60 🔥
+  - Rugby top (bought £8-16)              → resell eBay/Depop £40-75  → profit £20-45
+  - USA branded RL (bought £8-16)         → resell eBay/Depop £30-55  → profit £14-39
+  - Button-up shirt (bought £5-16)        → resell £15-25             → capped ⚠️ TIGHT
+  After fees (~13% platform + postage ~£3.50): subtract ~£5-8 from above.
 """
 
 import os
-import io
 import requests
 import time
-import numpy as np
 from datetime import datetime
 from colorama import Fore, Style, init
 
 init(autoreset=True)
 
-# ── TensorFlow lazy import (graceful fallback if not installed) ──
-try:
-    import tensorflow as tf
-    from tensorflow.keras.applications import MobileNetV2
-    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
-    from tensorflow.keras.preprocessing import image as tf_image
-    from PIL import Image
-
-    _model = None
-
-    def _get_model():
-        global _model
-        if _model is None:
-            print(f"{Fore.CYAN}[TF] Loading MobileNetV2 model (first run only)...")
-            _model = MobileNetV2(weights="imagenet")
-            print(f"{Fore.GREEN}[TF] Model loaded.")
-        return _model
-
-    TF_AVAILABLE = True
-except ImportError:
-    TF_AVAILABLE = False
-    print(f"{Fore.YELLOW}[WARNING] TensorFlow or Pillow not installed. Visual scoring disabled.")
-    print(f"{Fore.YELLOW}          Run: pip install tensorflow pillow numpy")
-
-
 # ─────────────────────────────────────────────
-#  CONFIG
+#  CONFIG — edit these before running
 # ─────────────────────────────────────────────
-DISCORD_WEBHOOK_URL = os.environ.get(
-    "DISCORD_WEBHOOK_URL",
-    "https://discord.com/api/webhooks/1511400876684873829/_mF8_LJxZrP4urAjNxVNAheMDQHsH35V_uUKp9v8iM0v3E5aNPJ0ASOYbFOw0cwhRlae"
-)
-POLL_INTERVAL   = 12
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1511400876684873829/_mF8_LJxZrP4urAjNxVNAheMDQHsH35V_uUKp9v8iM0v3E5aNPJ0ASOYbFOw0cwhRlae")
+POLL_INTERVAL   = 12          # seconds between scans (don't go below 8)
 MAX_PRICE_GBP   = 16.00
 DOMAIN          = "www.vinted.co.uk"
 
@@ -82,16 +49,17 @@ DOMAIN          = "www.vinted.co.uk"
 #  SEARCH QUERIES
 # ─────────────────────────────────────────────
 SEARCHES = [
+    # (label,               search_text,                           priority)
     ("🎽 STRIPED POLO",    "ralph lauren striped polo vintage",    "HIGH"),
     ("🏉 RUGBY TOP",       "ralph lauren rugby top",               "HIGH"),
     ("🇺🇸 USA BRANDED",   "ralph lauren USA polo",                "HIGH"),
-    ("🎤 CITY POLO",       "ralph lauren polo shirt oversized",    "HIGH"),
+    ("🎤 CHIEF KEEF POLO", "ralph lauren polo shirt oversized",    "HIGH"),
     ("👔 GENERAL POLO",    "ralph lauren polo shirt",              "MED"),
     ("🧥 RL GENERAL",      "ralph lauren",                        "MED"),
 ]
 
 # ─────────────────────────────────────────────
-#  BLOCKED KEYWORDS
+#  BLOCKED: UNDER-14 SIZES
 # ─────────────────────────────────────────────
 BLOCKED_SIZE_KEYWORDS = [
     "baby", "infant", "toddler", "newborn",
@@ -109,6 +77,9 @@ BLOCKED_SIZE_KEYWORDS = [
     "kids", "children", "child", "junior",
 ]
 
+# ─────────────────────────────────────────────
+#  BLOCKED: XL AND ABOVE
+# ─────────────────────────────────────────────
 BLOCKED_SIZE_LARGE = [
     " xl", "/xl", "-xl", "_xl",
     "xxl", "xxxl", "xxxxl",
@@ -118,243 +89,154 @@ BLOCKED_SIZE_LARGE = [
     "plus size", "plus-size",
 ]
 
+# ─────────────────────────────────────────────
+#  BLOCKED: WOMEN'S
+# ─────────────────────────────────────────────
 BLOCKED_WOMENS_KEYWORDS = [
     "women's", "womens", "womenswear",
     "ladies", "ladieswear",
     "for her", "for women",
 ]
 
+# ─────────────────────────────────────────────
+#  BLOCKED: ACCESSORIES (hats, caps, scarves, bags, belts, etc.)
+# ─────────────────────────────────────────────
 BLOCKED_ACCESSORY_KEYWORDS = [
+    # Headwear
     "hat", "cap", "caps", "beanie", "snapback", "fitted cap",
     "baseball cap", "trucker cap", "bucket hat", "flat cap",
     "dad hat", "visor", "beret", "fedora",
+    # Neck/face
     "scarf", "scarves", "snood", "bandana", "neckerchief",
+    # Bags
     "bag", "tote", "backpack", "handbag", "wallet", "purse",
     "clutch", "satchel", "holdall", "duffel", "fanny pack",
+    # Belts & small accessories
     "belt", "keyring", "keychain", "lanyard", "pin badge",
+    # Footwear
     "shoes", "trainers", "boots", "sneakers", "loafers",
     "sandals", "slippers", "socks",
+    # Jewellery / watches
     "watch", "bracelet", "necklace", "ring", "earrings",
     "cufflinks", "tie clip",
+    # Other
     "sunglasses", "glasses", "umbrella", "gloves",
 ]
 
+# ─────────────────────────────────────────────
+#  BLOCKED: BUTTON-UP SHIRTS (lower resell value)
+# ─────────────────────────────────────────────
 BUTTON_UP_KEYWORDS = [
     "button up", "button-up", "button down", "button-down",
     "dress shirt", "oxford shirt", "popover shirt",
     "flannel shirt", "western shirt", "chambray",
 ]
 
+# ─────────────────────────────────────────────
+#  CHIEF KEEF CITY POLO DETECTION
+#  These are the high-value embroidered city polos
+# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  BRAND CHECK
+# ─────────────────────────────────────────────
 REQUIRED_BRAND_KEYWORDS = [
     "ralph lauren", "polo ralph", "rl polo", "polo rl",
 ]
 
 # ─────────────────────────────────────────────
-#  CATEGORY DETECTION
-#  These map to the tier system. Checked in priority order.
-# ─────────────────────────────────────────────
-
-# Category A: Country/City Series
-COUNTRY_CITY_KEYWORDS = [
-    "uae", "great britain", "madrid", "amsterdam", "italia",
-    "united states", "france", "japan", "china", "australia",
-    "germany", "brazil", "new york", "chicago", "london",
-    "paris", "dubai", "barcelona", "milan", "rome", "sydney",
-    "berlin", "moscow", "atlanta", "boston", "shanghai",
-    "tokyo", "toronto", "mexico", "portugal", "sweden",
-    "polo cup", "polo challenge",
-]
-
-# Category B: Racing Series
-RACING_KEYWORDS = [
-    "team racing", "rl racing", "ralph lauren racing", "racing polo",
-    "racing badge", "racing crest",
-]
-
-# Category B2: Big Pony Numbered
-BIG_PONY_NUMBERED_KEYWORDS = [
-    "big pony", "#1", "#2", "#3", "#4",
-    "number 1", "number 2", "number 3", "number 4",
-    "no.1", "no.2", "no.3", "no.4",
-]
-
-# Category C: Diagonal Sash / Colourblock
-SASH_COLOURBLOCK_KEYWORDS = [
-    "sash", "diagonal", "colour block", "color block",
-    "colourblock", "colorblock", "multi colour", "multi-colour",
-    "multicolour", "panel", "colour-block",
-]
-
-# Category D: Plain Big Pony (no number, no sash)
-PLAIN_BIG_PONY_KEYWORDS = [
-    "big pony",
-]
-
-# Fit signals (minor boost)
-FIT_KEYWORDS = ["slim fit", "custom fit"]
-
-# ─────────────────────────────────────────────
-#  SIGNAL SCORING (v2)
+#  STEAL SIGNAL SYSTEM
+#  Based on visual analysis of target items:
+#  Big Pony + diagonal sash + city name + crest + sleeve number
+#  = the Chief Keef / Polo Cup era pieces that resell for £35-90
+#
+#  Points accumulate — the more signals, the better the steal.
+#  5+ points = FIRE regardless of raw profit calc.
 # ─────────────────────────────────────────────
 STEAL_SIGNALS = {
-    # Country/city — +5
-    "uae": 5, "great britain": 5, "madrid": 5, "amsterdam": 5,
-    "italia": 5, "united states": 5, "france": 5, "japan": 5,
-    "china": 5, "australia": 5, "germany": 5, "brazil": 5,
-    "new york": 5, "chicago": 5, "london": 5, "paris": 5,
-    "dubai": 5, "barcelona": 5, "milan": 5, "rome": 5,
-    "sydney": 5, "berlin": 5, "moscow": 5, "atlanta": 5,
-    "boston": 5, "shanghai": 5, "tokyo": 5,
-    "polo cup": 5, "polo challenge": 5,
-    # Racing — +5
-    "team racing": 5, "rl racing": 5, "ralph lauren racing": 5,
-    # Big Pony — +3
-    "big pony": 3,
-    # Sash/colourblock — +3
-    "sash": 3, "diagonal": 3, "colour block": 3, "color block": 3,
-    "colourblock": 3, "colorblock": 3,
-    # Numbered — +2
-    "#1": 2, "#2": 2, "#3": 2, "#4": 2,
-    "number 1": 2, "number 2": 2, "number 3": 2, "number 4": 2,
-    # Mesh — +2
-    "mesh": 2,
-    # Fit — +1
-    "slim fit": 1, "custom fit": 1,
-    # Supporting signals — kept from v1
-    "crest": 2, "badge": 2, "embroidered": 2, "embroidery": 2,
-    "striped": 2, "stripe": 2,
-    "multicolour": 2, "multi colour": 2, "multi-colour": 2,
-    "panel": 2, "flag": 2,
-    "double rl": 2, "rrl": 2,
-    "rugby": 1, "vintage": 1, "usa": 1,
-    "cable knit": 1, "made in usa": 1, "oversized": 1,
-    "limited": 1, "rare": 1,
+    # ── Tier 1: Strongest signals (3pts) ──
+    # These alone indicate a high-value collectable piece
+    "big pony":       3,   # Large embroidered horse — key visual identifier
+    "diagonal":       3,   # Diagonal sash across chest
+    "sash":           3,
+    "polo cup":       3,   # Tournament/event branding
+    "polo challenge": 3,
+    "paris":          3,   # City collection — embroidered city names
+    "dubai":          3,
+    "london":         3,   # (not women's — checked separately)
+    "new york":       3,
+    "chicago":        3,
+    "miami":          3,
+    "tokyo":          3,
+    "rome":           3,
+    "barcelona":      3,
+    "berlin":         3,
+    "sydney":         3,
+    "milan":          3,
+    "atlanta":        3,
+    "boston":         3,
+    "shanghai":       3,
+    "moscow":         3,
+    "madrid":         3,
+
+    # ── Tier 2: Strong supporting signals (2pts) ──
+    "crest":          2,   # Gold/royal crest badge embroidery
+    "badge":          2,
+    "embroidered":    2,
+    "embroidery":     2,
+    "striped":        2,   # Stripe patterns = vintage collectables
+    "stripe":         2,
+    "colour block":   2,   # Multi-panel colour blocking
+    "color block":    2,
+    "colourblock":    2,
+    "colorblock":     2,
+    "multicolour":    2,
+    "multi colour":   2,
+    "multi-colour":   2,
+    "panel":          2,
+    "flag":           2,   # Country flag embroidery (Paris polo image)
+    "pwing":          2,
+    "custom fit":     2,
+    "slim fit":       2,
+    "number":         2,   # Numbered sleeve (#3, #5, #7)
+    "double rl":      2,
+    "rrl":            2,
+
+    # ── Tier 3: General quality signals (1pt) ──
+    "rugby":          1,
+    "vintage":        1,
+    "usa":            1,
+    "cable knit":     1,
+    "made in usa":    1,
+    "country":        1,
+    "oversized":      1,
+    "limited":        1,
+    "rare":           1,
 }
 
-# ─────────────────────────────────────────────
-#  RESELL TABLE
-# ─────────────────────────────────────────────
+# Thresholds
+SIGNAL_FIRE_THRESHOLD  = 5   # 5+ pts = FIRE (e.g. big pony + city name + crest = 7pts)
+SIGNAL_SOLID_THRESHOLD = 2   # 2-4 pts = at least SOLID floor
+
+# Resell estimates keyed by dominant signal
 RESELL_TABLE = {
-    "cat_a_b":      (55, 90),   # Country/City or Racing
-    "cat_b2":       (40, 75),   # Big Pony Numbered
-    "cat_c":        (35, 60),   # Sash / Colourblock
-    "cat_d":        (25, 45),   # Plain Big Pony
-    "cat_e":        (18, 32),   # Standard RL
-    "rugby":        (40, 75),
+    "high_signal":  (45, 90),   # 5+ signal points — city polo / polo cup era
+    "mid_signal":   (30, 55),   # 2-4 signal points — striped, crested, colour-blocked
+    "rugby":        (40, 75),   # Rugby tops
     "double rl":    (50, 90),
     "rrl":          (50, 90),
     "cable":        (30, 55),
-    "button_up":    (12, 22),
+    "button_up":    (12, 22),   # Button-ups — deliberately low
     "default":      (18, 32),
 }
 
 POSTAGE_COST  = 3.50
-EBAY_FEE_RATE = 0.1269
+EBAY_FEE_RATE = 0.1269   # ~12.69% final value fee
 
-# ─────────────────────────────────────────────
-#  TF VISUAL SCORING
-#  MobileNetV2 classifies the listing image.
-#  We look for ImageNet classes related to clothing quality/style
-#  and map them to a 0–100 confidence score.
-# ─────────────────────────────────────────────
-
-# ImageNet class groups we consider "clothing-relevant" (MobileNetV2 labels)
-CLOTHING_POSITIVE_CLASSES = {
-    # Polo/jersey adjacent
-    "jersey",         # sports jersey
-    "sweatshirt",
-    "pullover",
-    "cardigan",
-    "suit",
-    "military_uniform",
-    "abaya",           # fabric/clothing signal
-    # Quality/texture signals
-    "wool",
-    "velvet",
-    # Pattern signals
-    "stripe",
-    "Band_Aid",        # colour contrast (sometimes fires on sash patterns)
-    "handkerchief",    # colourful fabric
-}
-
-CLOTHING_NEGATIVE_CLASSES = {
-    "brassiere", "bikini", "swimwear", "miniskirt",
-    "jean", "jeans", "denim",          # not polo territory
-    "sandal", "shoe", "boot",          # accessories
-    "cap", "hat",
-}
+# Cheap rugby steal threshold
+CHEAP_RUGBY_MAX_PRICE = 7.00
 
 
-def assess_image_with_tf(image_url: str) -> dict:
-    """
-    Download the listing image, run MobileNetV2, and return a visual confidence dict.
-    Always returns a result even on failure (score = -1 means unavailable).
-    """
-    if not TF_AVAILABLE:
-        return {"score": -1, "label": "TF unavailable", "top_classes": []}
-
-    try:
-        resp = requests.get(image_url, timeout=8)
-        resp.raise_for_status()
-        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
-        img = img.resize((224, 224))
-
-        x = tf_image.img_to_array(img)
-        x = np.expand_dims(x, axis=0)
-        x = preprocess_input(x)
-
-        model = _get_model()
-        preds = model.predict(x, verbose=0)
-        decoded = decode_predictions(preds, top=5)[0]
-        # decoded = list of (imagenet_id, class_name, confidence)
-
-        top_classes = [(cls, round(float(conf) * 100, 1)) for _, cls, conf in decoded]
-
-        # Score: sum positive class confidences, subtract negatives
-        score = 0.0
-        for _, cls, conf in decoded:
-            if cls in CLOTHING_POSITIVE_CLASSES:
-                score += conf * 100
-            elif cls in CLOTHING_NEGATIVE_CLASSES:
-                score -= conf * 50
-
-        # Also check if top-1 class is clothing-related at all
-        top1_class = decoded[0][1]
-        top1_conf  = decoded[0][2]
-
-        # Presence of fabric/pattern class in top-3 = boost
-        top3_classes = {cls for _, cls, _ in decoded[:3]}
-        if top3_classes & CLOTHING_POSITIVE_CLASSES:
-            score += 15
-
-        # Clamp to 0–100
-        score = max(0.0, min(100.0, score))
-        score = round(score, 1)
-
-        # Human-readable label
-        if score >= 60:
-            label = "🟢 Visually strong"
-        elif score >= 35:
-            label = "🟡 Visually moderate"
-        elif score >= 10:
-            label = "🟠 Visually weak"
-        else:
-            label = "❓ Uncertain (no clothing class detected)"
-
-        return {
-            "score": score,
-            "label": label,
-            "top_classes": top_classes[:3],
-        }
-
-    except Exception as e:
-        return {"score": -1, "label": f"Error: {e}", "top_classes": []}
-
-
-# ─────────────────────────────────────────────
-#  HELPERS
-# ─────────────────────────────────────────────
-def get_price(item: dict) -> float:
+def get_price(item):
     price_data = item.get("price", 0)
     if isinstance(price_data, (int, float)):
         return float(price_data)
@@ -373,14 +255,11 @@ def get_price(item: dict) -> float:
     return 0.0
 
 
-def text_of(item: dict) -> str:
-    return " ".join([
-        item.get("title", ""),
-        item.get("description", ""),
-    ]).lower()
-
-
 def score_signals(title: str) -> tuple:
+    """
+    Scan title for steal signals and return (total_score, matched_signal_list).
+    More signals = rarer / more collectable piece.
+    """
     title_lower = title.lower()
     matched = []
     total = 0
@@ -391,164 +270,90 @@ def score_signals(title: str) -> tuple:
     return total, matched
 
 
-def detect_category(text: str) -> str:
-    """
-    Returns 'A', 'B', 'B2', 'C', 'D', 'E' based on keyword presence.
-    Priority order: A > B > B2 > C > D > E
-    """
-    if any(kw in text for kw in COUNTRY_CITY_KEYWORDS):
-        return "A"
-    if any(kw in text for kw in RACING_KEYWORDS):
-        return "B"
-    if any(kw in text for kw in BIG_PONY_NUMBERED_KEYWORDS):
-        return "B2"
-    if any(kw in text for kw in SASH_COLOURBLOCK_KEYWORDS):
-        return "C"
-    if any(kw in text for kw in PLAIN_BIG_PONY_KEYWORDS):
-        return "D"
-    return "E"
+def is_cheap_rugby(title: str, buy_price: float) -> bool:
+    return "rugby" in title.lower() and buy_price <= CHEAP_RUGBY_MAX_PRICE
 
 
 def is_button_up(title: str) -> bool:
     return any(kw in title.lower() for kw in BUTTON_UP_KEYWORDS)
 
 
-CATEGORY_LABELS = {
-    "A":  "🌍 Country/City Series",
-    "B":  "🏎️ RL Racing Series",
-    "B2": "🐴 Big Pony Numbered",
-    "C":  "🔷 Diagonal Sash/Colourblock",
-    "D":  "🐴 Plain Big Pony",
-    "E":  "👕 Standard RL Polo",
-}
-
-# ─────────────────────────────────────────────
-#  VERDICT ENGINE (v2)
-# ─────────────────────────────────────────────
-def estimate_profit(item: dict) -> dict:
-    title    = item.get("title", "")
-    full_txt = text_of(item)
-    price    = get_price(item)
-
+def estimate_profit(title: str, buy_price: float, label: str) -> dict:
+    title_lower = title.lower()
     signal_score, matched_signals = score_signals(title)
-    category  = detect_category(full_txt)
-    btn_up    = is_button_up(title)
+    btn_up  = is_button_up(title)
+    rugby   = is_cheap_rugby(title, buy_price)
 
     # ── Pick resell bracket ──
     if btn_up:
         resell_key = "button_up"
-    elif category in ("A", "B"):
-        resell_key = "cat_a_b"
-    elif category == "B2":
-        resell_key = "cat_b2"
-    elif category == "C":
-        resell_key = "cat_c"
-    elif category == "D":
-        resell_key = "cat_d"
-    elif "rugby" in full_txt:
+    elif signal_score >= SIGNAL_FIRE_THRESHOLD:
+        resell_key = "high_signal"
+    elif signal_score >= SIGNAL_SOLID_THRESHOLD:
+        resell_key = "mid_signal"
+    elif "rugby" in title_lower:
         resell_key = "rugby"
-    elif "double rl" in full_txt or "rrl" in full_txt:
-        resell_key = "double rl" if "double rl" in full_txt else "rrl"
-    elif "cable" in full_txt:
+    elif "double rl" in title_lower or "rrl" in title_lower:
+        resell_key = "double rl" if "double rl" in title_lower else "rrl"
+    elif "cable" in title_lower:
         resell_key = "cable"
     else:
-        resell_key = "cat_e"
+        resell_key = "default"
 
     low, high = RESELL_TABLE[resell_key]
-    net_low  = round(low  * (1 - EBAY_FEE_RATE) - POSTAGE_COST - price, 2)
-    net_high = round(high * (1 - EBAY_FEE_RATE) - POSTAGE_COST - price, 2)
-    roi_low  = round((net_low  / price) * 100) if price > 0 else 0
-    roi_high = round((net_high / price) * 100) if price > 0 else 0
+    net_low  = round(low  * (1 - EBAY_FEE_RATE) - POSTAGE_COST - buy_price, 2)
+    net_high = round(high * (1 - EBAY_FEE_RATE) - POSTAGE_COST - buy_price, 2)
+    roi_low  = round((net_low  / buy_price) * 100) if buy_price > 0 else 0
+    roi_high = round((net_high / buy_price) * 100) if buy_price > 0 else 0
 
-    # ── NEW VERDICT LOGIC — priority order ──
+    # ── VERDICT ──
+    # Signal score overrides raw profit — these pieces are rare regardless of price
     if btn_up:
-        rating = "🟠 TIGHT"
-
-    # Category A or B
-    elif category in ("A", "B"):
-        if price <= 20:
-            rating = "🔵 BLUE"
-        elif price <= 30:
-            rating = "🟢 GREEN"
-        else:
-            rating = "🟡 SOLID"
-
-    # Category B2 — Big Pony Numbered
-    elif category == "B2":
-        if price <= 12:
-            rating = "🔵 BLUE"
-        else:
-            rating = "🟢 GREEN"
-
-    # Category C — Sash / Colourblock
-    elif category == "C":
-        if price <= 15:
-            rating = "🔵 BLUE"
-        elif price <= 25:
-            rating = "🟢 GREEN"
-        else:
-            rating = "🟡 SOLID"
-
-    # Category D — Plain Big Pony
-    elif category == "D":
-        if price <= 12:
-            rating = "🟢 GREEN"
-        else:
-            rating = "🟡 SOLID"
-
-    # Category E — Standard RL (NEVER auto-SKIP if brand confirmed)
-    elif category == "E":
-        if price <= 10:
-            rating = "🟡 SOLID"
-        elif price <= MAX_PRICE_GBP:
-            rating = "🟠 TIGHT"
-        else:
-            rating = "❌ SKIP"
-
+        rating = "⚠️ TIGHT"   # Button-ups hard-capped
+    elif signal_score >= SIGNAL_FIRE_THRESHOLD or rugby:
+        rating = "🔥 FIRE"
+    elif net_low >= 20 or signal_score >= SIGNAL_SOLID_THRESHOLD:
+        rating = "✅ SOLID" if net_low >= 10 else "⚠️ TIGHT"
+    elif net_low >= 10:
+        rating = "✅ SOLID"
+    elif net_low >= 4:
+        rating = "⚠️ TIGHT"
     else:
-        rating = "🟠 TIGHT"
+        rating = "❌ SKIP"
 
-    # ── Special tag ──
+    # Build special tag for Discord
     special_tag = ""
-    cat_label = CATEGORY_LABELS.get(category, "")
-    if category in ("A", "B") and price <= 20:
-        special_tag = f"🏆 PREMIUM SNIPE — {cat_label}"
-    elif category == "B2":
-        special_tag = f"🐴 BIG PONY NUMBERED — {cat_label}"
-    elif category == "C":
-        special_tag = f"🔷 SASH/COLOURBLOCK — {cat_label}"
+    if signal_score >= SIGNAL_FIRE_THRESHOLD:
+        # Show top matched signals in the tag
+        top = ", ".join(s.split("(")[0] for s in matched_signals[:3])
+        special_tag = f"🏆 PREMIUM PIECE — {top}"
+    elif rugby:
+        special_tag = "💸 CHEAP RUGBY STEAL"
     elif matched_signals:
         top = ", ".join(s.split("(")[0] for s in matched_signals[:2])
         special_tag = f"✨ Signals: {top}"
 
     return {
-        "resell_low":      low,
-        "resell_high":     high,
-        "profit_low":      net_low,
-        "profit_high":     net_high,
-        "roi_low":         roi_low,
-        "roi_high":        roi_high,
-        "rating":          rating,
-        "special_tag":     special_tag,
-        "signal_score":    signal_score,
+        "resell_low": low, "resell_high": high,
+        "profit_low": net_low, "profit_high": net_high,
+        "roi_low": roi_low, "roi_high": roi_high,
+        "rating": rating,
+        "special_tag": special_tag,
+        "signal_score": signal_score,
         "matched_signals": matched_signals,
-        "category":        category,
-        "cat_label":       cat_label,
     }
 
 
 # ─────────────────────────────────────────────
-#  VINTED API
+#  VINTED API FETCH
 # ─────────────────────────────────────────────
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-    ),
-    "Accept":          "application/json, text/plain, */*",
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                  "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-GB,en;q=0.9",
-    "Referer":         f"https://{DOMAIN}/",
-    "Origin":          f"https://{DOMAIN}",
+    "Referer": f"https://{DOMAIN}/",
+    "Origin":  f"https://{DOMAIN}",
 }
 
 session = requests.Session()
@@ -571,7 +376,7 @@ def fetch_listings(search_text: str, max_price: float) -> list:
         if r.status_code == 200:
             return r.json().get("items", [])
         elif r.status_code == 401:
-            print(f"{Fore.YELLOW}[AUTH] 401 received — re-fetching session cookies...")
+            print(f"{Fore.YELLOW}[AUTH] 401 received, re-fetching session cookies...")
             _refresh_session()
     except Exception as e:
         print(f"{Fore.RED}[ERROR] fetch_listings: {e}")
@@ -590,9 +395,9 @@ def _refresh_session():
 # ─────────────────────────────────────────────
 def is_infant_or_underage(item: dict) -> bool:
     text = " ".join([
-        item.get("title", ""),
-        item.get("description", ""),
-        item.get("size_title", ""),
+        (item.get("title") or ""),
+        (item.get("description") or ""),
+        (item.get("size_title") or ""),
     ]).lower()
     return any(kw in text for kw in BLOCKED_SIZE_KEYWORDS)
 
@@ -603,49 +408,46 @@ def is_oversized(item: dict) -> bool:
 
 
 def is_womens(item: dict) -> bool:
-    dept      = (item.get("department", "") or "").lower()
-    dept_name = (item.get("department_name", "") or "").lower()
+    dept = (item.get("department") or "").lower()
+    dept_name = (item.get("department_name") or "").lower()
     if "women" in dept or "female" in dept or "women" in dept_name:
         return True
     text = " ".join([
-        item.get("title", ""),
-        item.get("description", ""),
+        (item.get("title") or ""),
+        (item.get("description") or ""),
         dept, dept_name,
     ]).lower()
     return any(kw in text for kw in BLOCKED_WOMENS_KEYWORDS)
 
 
 def is_accessory(item: dict) -> bool:
+    """Block hats, caps, bags, belts, scarves and all accessories."""
     text = " ".join([
-        item.get("title", ""),
-        item.get("description", ""),
-        item.get("category_title", ""),
+        (item.get("title") or ""),
+        (item.get("description") or ""),
+        (item.get("category_title") or ""),   # Vinted category field
     ]).lower()
     return any(kw in text for kw in BLOCKED_ACCESSORY_KEYWORDS)
 
 
 def is_ralph_lauren(item: dict) -> bool:
-    title = (item.get("title", "") or "").lower()
-    brand = (item.get("brand_title", "") or "").lower()
+    title = (item.get("title") or "").lower()
+    brand = (item.get("brand_title") or "").lower()
     return (
         any(kw in brand for kw in REQUIRED_BRAND_KEYWORDS) or
         any(kw in title for kw in REQUIRED_BRAND_KEYWORDS)
     )
 
 
-# ─────────────────────────────────────────────
-#  DISCORD
-# ─────────────────────────────────────────────
-COLOR_MAP = {
-    "🔵 BLUE":  0x0055FF,
-    "🟢 GREEN": 0x00C851,
-    "🟡 SOLID": 0xFFDD00,
-    "🟠 TIGHT": 0xFF8800,
-    "❌ SKIP":  0xCC0000,
-}
+def score_item(item: dict) -> tuple:
+    title = item.get("title") or ""
+    return score_signals(title)
 
 
-def send_discord(item: dict, label: str, profit: dict, visual: dict):
+# ─────────────────────────────────────────────
+#  DISCORD NOTIFICATION
+# ─────────────────────────────────────────────
+def send_discord(item: dict, label: str, profit: dict):
     price = get_price(item)
     title = item.get("title", "Unknown")
     url   = item.get("url") or f"https://{DOMAIN}/items/{item.get('id')}"
@@ -653,51 +455,40 @@ def send_discord(item: dict, label: str, profit: dict, visual: dict):
     if item.get("photos"):
         photo = item["photos"][0].get("url") or item["photos"][0].get("full_size_url", "")
 
-    embed_color = COLOR_MAP.get(profit["rating"], 0x888888)
+    color_map = {
+        "🔥 FIRE":  0x0099FF,   # Blue  — premium finds
+        "✅ SOLID": 0x00C851,   # Green
+        "⚠️ TIGHT": 0xFFBB33,  # Amber
+        "❌ SKIP":  0xCC0000,   # Red
+    }
+    embed_color = color_map.get(profit["rating"], 0x888888)
 
+    # Build description — add special tag if present
     desc_lines = [f"**{title}**", f"[🔗 View on Vinted]({url})"]
     if profit.get("special_tag"):
         desc_lines.insert(0, f"**{profit['special_tag']}**")
 
-    # Visual score display
-    vis_score = visual.get("score", -1)
-    if vis_score < 0:
-        vis_display = "Unavailable"
-    else:
-        vis_display = f"{vis_score}/100 — {visual.get('label', '')}"
-        if visual.get("top_classes"):
-            top_cls_str = ", ".join(f"{c}({s}%)" for c, s in visual["top_classes"])
-            vis_display += f"\nTop classes: {top_cls_str}"
-
-    # Signals display
-    signals_str = (
-        f"{profit['signal_score']}pts — "
-        + (", ".join(s.split("(")[0] for s in profit["matched_signals"]) or "none detected")
-    )
-
     embed = {
-        "title":       f"{profit['rating']}  |  {label}  |  £{price:.2f}",
+        "title": f"{label}  |  £{price:.2f}",
         "description": "\n".join(desc_lines),
-        "color":       embed_color,
+        "color": embed_color,
         "fields": [
-            {"name": "📂 Category",      "value": profit["cat_label"],                                           "inline": True},
-            {"name": "💰 Buy Price",     "value": f"£{price:.2f}",                                              "inline": True},
-            {"name": "📦 Resell Range",  "value": f"£{profit['resell_low']}–£{profit['resell_high']} (eBay/Depop)", "inline": True},
-            {"name": "📈 Net Profit",    "value": f"£{profit['profit_low']}–£{profit['profit_high']}",           "inline": True},
-            {"name": "🎯 ROI",           "value": f"{profit['roi_low']}%–{profit['roi_high']}%",                 "inline": True},
-            {"name": "⚡ Verdict",       "value": profit["rating"],                                             "inline": True},
-            {"name": "🔍 Signal Score",  "value": signals_str,                                                  "inline": False},
-            {"name": "🤖 Visual Score",  "value": vis_display,                                                  "inline": False},
+            {"name": "💰 Buy Price",    "value": f"£{price:.2f}",                                           "inline": True},
+            {"name": "📦 Resell Range", "value": f"£{profit['resell_low']}–£{profit['resell_high']} (eBay/Depop)", "inline": True},
+            {"name": "📈 Net Profit",   "value": f"£{profit['profit_low']}–£{profit['profit_high']}",        "inline": True},
+            {"name": "🎯 ROI",          "value": f"{profit['roi_low']}%–{profit['roi_high']}%",              "inline": True},
+            {"name": "⚡ Verdict",      "value": profit["rating"],                                          "inline": True},
+            {"name": "🔍 Signal Score", "value": f"{profit['signal_score']}pts — {', '.join(s.split('(')[0] for s in profit['matched_signals']) or 'none'}", "inline": False},
         ],
         "thumbnail": {"url": photo} if photo else {},
-        "footer":    {"text": f"Ralph Lauren Bot v2.0 • {datetime.now().strftime('%H:%M:%S')}"},
+        "footer": {"text": f"Ralph Lauren Bot v1.2 • {datetime.now().strftime('%H:%M:%S')}"},
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
 
     payload = {
         "username":   "RL Sniper 🎽",
         "avatar_url": "https://i.imgur.com/4M34hi2.png",
-        "embeds":     [embed],
+        "embeds": [embed],
     }
 
     try:
@@ -709,27 +500,15 @@ def send_discord(item: dict, label: str, profit: dict, visual: dict):
 
 
 # ─────────────────────────────────────────────
-#  CONSOLE COLOUR HELPER
-# ─────────────────────────────────────────────
-def verdict_color(rating: str) -> str:
-    if "BLUE"  in rating: return Fore.BLUE
-    if "GREEN" in rating: return Fore.GREEN
-    if "SOLID" in rating: return Fore.YELLOW
-    if "TIGHT" in rating: return Fore.YELLOW
-    return Fore.RED
-
-
-# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 def run():
-    print(f"\n{Fore.CYAN}{'═'*65}")
-    print(f"{Fore.CYAN}  🎽  RALPH LAUREN VINTED SNIPER v2.0 — STARTED")
+    print(f"\n{Fore.CYAN}{'═'*60}")
+    print(f"{Fore.CYAN}  🎽  RALPH LAUREN VINTED SNIPER v1.2 — STARTED")
     print(f"{Fore.CYAN}  Max Price: £{MAX_PRICE_GBP}  |  Interval: {POLL_INTERVAL}s")
     print(f"{Fore.CYAN}  Filters: Men's only | Age 14+ | Max size L | No accessories")
-    print(f"{Fore.CYAN}  TensorFlow visual scoring: {'✅ ENABLED' if TF_AVAILABLE else '❌ DISABLED (install tensorflow)'}")
-    print(f"{Fore.CYAN}  🔵 BLUE = must-buy | 🟢 GREEN = strong | 🟡 SOLID = decent | 🟠 TIGHT = marginal")
-    print(f"{Fore.CYAN}{'═'*65}\n")
+    print(f"{Fore.CYAN}  🔥 FIRE = blue | city polos + cheap rugbies auto-FIRE")
+    print(f"{Fore.CYAN}{'═'*60}\n")
 
     _refresh_session()
     cycle = 0
@@ -737,10 +516,7 @@ def run():
     while True:
         cycle += 1
         found_this_cycle = 0
-        print(
-            f"{Fore.WHITE}[{datetime.now().strftime('%H:%M:%S')}] "
-            f"Cycle #{cycle} — scanning {len(SEARCHES)} queries..."
-        )
+        print(f"{Fore.WHITE}[{datetime.now().strftime('%H:%M:%S')}] Cycle #{cycle} scanning {len(SEARCHES)} queries...")
 
         for label, search_text, priority in SEARCHES:
             items = fetch_listings(search_text, MAX_PRICE_GBP)
@@ -767,37 +543,24 @@ def run():
                 if price <= 0 or price > MAX_PRICE_GBP:
                     continue
 
-                # ── PROFIT & VERDICT ──
-                profit = estimate_profit(item)
-
-                # ── TF VISUAL ASSESSMENT ──
-                photo_url = ""
-                if item.get("photos"):
-                    photo_url = (
-                        item["photos"][0].get("url") or
-                        item["photos"][0].get("full_size_url", "")
-                    )
-                visual = assess_image_with_tf(photo_url) if photo_url else {
-                    "score": -1, "label": "No image", "top_classes": []
-                }
+                # ── SCORE & PROFIT ──
+                profit = estimate_profit(item.get("title", ""), price, label)
 
                 found_this_cycle += 1
-                vc = verdict_color(profit["rating"])
-                tag = f"  [{profit['special_tag']}]" if profit.get("special_tag") else ""
-                vis_str = (
-                    f"  | 🤖 {visual['score']}/100"
-                    if visual["score"] >= 0
-                    else "  | 🤖 N/A"
+                verdict_color = (
+                    Fore.BLUE   if "FIRE"  in profit["rating"] else
+                    Fore.GREEN  if "SOLID" in profit["rating"] else
+                    Fore.YELLOW
                 )
+                tag = f"  [{profit['special_tag']}]" if profit.get("special_tag") else ""
                 print(
-                    f"  {vc}{profit['rating']}  {label}  "
+                    f"  {verdict_color}{profit['rating']}  {label}  "
                     f"£{price:.2f}  →  profit £{profit['profit_low']}-£{profit['profit_high']}"
-                    f"{tag}{vis_str}  |  {item.get('title', '')[:40]}"
+                    f"{tag}  |  {item.get('title', '')[:45]}"
                 )
 
-                # ── DISCORD — always send, visual score included ──
                 if DISCORD_WEBHOOK_URL:
-                    send_discord(item, label, profit, visual)
+                    send_discord(item, label, profit)
 
             time.sleep(1.5)
 
