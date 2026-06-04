@@ -1,2 +1,5 @@
 requests
 colorama
+tensorflow
+pillow
+numpy
