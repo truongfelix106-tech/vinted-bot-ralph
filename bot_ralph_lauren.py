@@ -18,7 +18,7 @@ VERDICT TIERS:
   🔵 BLUE  — Best snipe. Highly desirable, underpriced, must-buy.
   🟢 GREEN — Strong buy. Good style, fair price, solid resale.
   🟡 SOLID — Decent flip. Standard good RL, worth buying.
-  🟠 TIGHT — Marginal. Low resale ceiling or weak signals.
+  🟠 TIGHT — Marginal. Low resale ceiling or weak signals
   ❌ SKIP  — Not worth it. Plain/common, no collector demand.
 
 CATEGORY SYSTEM:
